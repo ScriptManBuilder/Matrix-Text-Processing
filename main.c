@@ -1,210 +1,279 @@
-﻿#include <stdio.h>
+﻿#define _CRT_SECURE_NO_WARNINGS   // <-- Ставим до подключений
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#define _CRT_SECURE_NO_WARNINGS
+#include <omp.h>
 
-// Функція для читання матриці з файлу
+#define MAX_FILENAME 256  // Максимальная длина имени файла
+// Функция для чтения матрицы из файла (без изменений)
 void readMatrixFromFile(const char* filename, float*** matrix, int* rows, int* cols) {
-    FILE* file = fopen(filename, "r");  // Відкриваємо файл для читання
+    FILE* file = fopen(filename, "r");
     if (file == NULL) {
-        printf("Error opening file\n");  // Якщо файл не відкрився, виводимо помилку
+        printf("Error opening file\n");
         exit(1);
     }
 
-    fscanf_s(file, "%d %d", rows, cols);  // Читаємо розміри матриці
+    fscanf(file, "%d %d", rows, cols);
 
-    *matrix = (float**)malloc(*rows * sizeof(float*));  // Виділяємо пам'ять для матриці
+    *matrix = (float**)malloc(*rows * sizeof(float*));
     for (int i = 0; i < *rows; ++i) {
-        (*matrix)[i] = (float*)malloc(*cols * sizeof(float));  // Виділяємо пам'ять для кожного рядка
+        (*matrix)[i] = (float*)malloc(*cols * sizeof(float));
         for (int j = 0; j < *cols; ++j) {
-            fscanf_s(file, "%f", &(*matrix)[i][j]);  // Читаємо значення елементів матриці
+            fscanf(file, "%f", &(*matrix)[i][j]);
         }
     }
-    fclose(file);  // Закриваємо файл після читання
+    fclose(file);
 }
 
-// Функція для запису результату в файл
-void writeToFile(const char* filename, float sum) {
-    FILE* file = fopen(filename, "w");  // Відкриваємо файл для запису
-    if (file == NULL) {
-        printf("Error opening file\n");  // Якщо файл не відкрився, виводимо помилку
-        exit(1);
-    }
+//-----------------------------------------
+// ПОСЛЕДОВАТЕЛЬНЫЕ ФУНКЦИИ
+//-----------------------------------------
 
-    fprintf(file, "%.2f\n", sum);  // Записуємо результат в файл
-    fclose(file);  // Закриваємо файл
-}
-
-// Функція для множення матриці на коефіцієнт та підрахунку суми елементів
-float multiplyMatrixAndSum(float** matrix, int rows, int cols, float coefficient) {
-    float sum = 0;
+// Последовательное умножение матрицы на коэффициент и подсчёт суммы
+float multiplyMatrixAndSumSequential(float** matrix, int rows, int cols, float coefficient) {
+    float sum = 0.0f;
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
-            matrix[i][j] *= coefficient;  // Множимо елемент матриці на коефіцієнт
-            sum += matrix[i][j];  // Додаємо елемент до загальної суми
+            matrix[i][j] *= coefficient;
+            sum += matrix[i][j];
         }
     }
-    return sum;  // Повертаємо загальну суму
+    return sum;
 }
 
-// Функція для вибору всіх ненульових елементів матриці в новий масив
+// Последовательный подсчёт количества строк, где есть нулевой элемент
+int countRowsWithZeroSequential(float** matrix, int rows, int cols) {
+    int count = 0;
+    for (int i = 0; i < rows; i++) {
+        int rowHasZero = 0;
+        for (int j = 0; j < cols; j++) {
+            if (matrix[i][j] == 0) {
+                rowHasZero = 1;
+                break;
+            }
+        }
+        count += rowHasZero;
+    }
+    return count;
+}
+
+// Последовательное умножение матрицы на вектор
+void multiplyMatrixByVectorSequential(float** matrix, float* vector, int rows, int cols, float* result) {
+    for (int i = 0; i < rows; i++) {
+        result[i] = 0.0f;
+        for (int j = 0; j < cols; j++) {
+            result[i] += matrix[i][j] * vector[j];
+        }
+    }
+}
+
+//-----------------------------------------
+// ПАРАЛЛЕЛЬНЫЕ ФУНКЦИИ (OpenMP)
+//-----------------------------------------
+
+// Параллельное умножение матрицы на коэффициент и подсчёт суммы
+float multiplyMatrixAndSumParallel(float** matrix, int rows, int cols, float coefficient) {
+    float sum = 0.0f;
+
+    // Используем reduction(+:sum), чтобы корректно суммировать
+    // значения из всех потоков в одну переменную sum
+#pragma omp parallel for reduction(+:sum)
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            matrix[i][j] *= coefficient;
+            sum += matrix[i][j];
+        }
+    }
+    return sum;
+}
+
+// Параллельный подсчёт количества строк, где есть нулевой элемент
+int countRowsWithZeroParallel(float** matrix, int rows, int cols) {
+    int count = 0;
+#pragma omp parallel for reduction(+:count)
+    for (int i = 0; i < rows; i++) {
+        int rowHasZero = 0;
+        for (int j = 0; j < cols; j++) {
+            if (matrix[i][j] == 0) {
+                rowHasZero = 1;
+                break;
+            }
+        }
+        count += rowHasZero;
+    }
+    return count;
+}
+
+// Параллельное умножение матрицы на вектор
+void multiplyMatrixByVectorParallel(float** matrix, float* vector, int rows, int cols, float* result) {
+#pragma omp parallel for
+    for (int i = 0; i < rows; i++) {
+        float temp = 0.0f;
+        for (int j = 0; j < cols; j++) {
+            temp += matrix[i][j] * vector[j];
+        }
+        result[i] = temp;
+    }
+}
+
+//-----------------------------------------
+// Остальные функции (extractNonZeroElements, averageInWindow) 
+// можно тоже параллелить аналогичным образом, но 
+// в некоторых случаях придётся аккуратно собирать результаты.
+//-----------------------------------------
+
+// Функция для выбора всех ненулевых элементов (пока оставим последовательную)
 void extractNonZeroElements(float** matrix, int rows, int cols, float** result, int* size) {
     *size = 0;
-
-    // Спочатку підраховуємо кількість ненульових елементів
+    // Считаем количество ненулевых элементов
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
-            if (matrix[i][j] != 0) {  // Якщо елемент ненульовий
+            if (matrix[i][j] != 0) {
                 (*size)++;
             }
         }
     }
 
-    // Виділяємо пам'ять для масиву результатів
     *result = (float*)malloc(*size * sizeof(float));
     int idx = 0;
-
-    // Тепер копіюємо ненульові елементи в новий масив
+    // Копируем ненулевые элементы
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
-            if (matrix[i][j] != 0) {  // Якщо елемент ненульовий
-                (*result)[idx++] = matrix[i][j];  // Додаємо елемент у результат
+            if (matrix[i][j] != 0) {
+                (*result)[idx++] = matrix[i][j];
             }
         }
     }
 }
 
-// Функція для підрахунку кількості рядків, де є нульовий елемент
-int countRowsWithZero(float** matrix, int rows, int cols) {
-    int count = 0;
-    for (int i = 0; i < rows; i++) {
-        int rowHasZero = 0;
-        for (int j = 0; j < cols; j++) {
-            if (matrix[i][j] == 0) {  // Якщо знайдено нульовий елемент
-                rowHasZero = 1;
-                break;
-            }
-        }
-        if (rowHasZero) {
-            count++;  // Підраховуємо рядки з нулями
-        }
-    }
-    return count;  // Повертаємо кількість рядків з нулями
-}
-
-// Функція для усереднення значень кожного вікна з N елементів
+// Функция для усреднения значений каждого окна размером N (тоже пока оставим последовательную)
 void averageInWindow(float* vector, int length, int N, float** result, int* resultSize) {
     *resultSize = length / N;
     *result = (float*)malloc(*resultSize * sizeof(float));
     for (int i = 0; i < *resultSize; i++) {
         float sum = 0;
         for (int j = 0; j < N; j++) {
-            sum += vector[i * N + j];  // Підсумовуємо елементи вікна
+            sum += vector[i * N + j];
         }
-        (*result)[i] = sum / N;  // Усереднюємо елементи
+        (*result)[i] = sum / N;
     }
 }
 
-// Функція для множення матриці на вектор
-void multiplyMatrixByVector(float** matrix, float* vector, int rows, int cols, float* result) {
-    for (int i = 0; i < rows; i++) {
-        result[i] = 0;
-        for (int j = 0; j < cols; j++) {
-            result[i] += matrix[i][j] * vector[j];  // Множимо і додаємо до результату
-        }
-    }
-}int main() {
-    const char* matrixFile = "input.txt";  // Шлях до файлу матриці
-    const char* outputFile = "output.txt"; // Шлях до файлу виводу
-    float coefficient = 2.5;  // Коефіцієнт для множення
+int main() {
+    char matrixFile[MAX_FILENAME];
+    char outputFile[MAX_FILENAME];
+
+    // Запрос имен файлов с клавиатуры
+    printf("Enter the name of the input file with the matrix ( input.txt ): ");
+    scanf("%255s", matrixFile);  // ограничиваем количество символов
+    printf("Enter the output file name for the results ( output.txt ): ");
+    scanf("%255s", outputFile);
+    float coefficient = 2.5f;
 
     float** matrix;
     int rows, cols;
-    readMatrixFromFile(matrixFile, &matrix, &rows, &cols);  // Читання матриці з файлу
+    readMatrixFromFile(matrixFile, &matrix, &rows, &cols);
 
-    // Відкриття файлу для запису
+    // Создадим вектор для умножения "матрица-вектор"
+    float* vector = (float*)malloc(cols * sizeof(float));
+    for (int i = 0; i < cols; i++) {
+        vector[i] = (float)(i + 1);
+    }
+    float* vectorResult = (float*)malloc(rows * sizeof(float));
+
+    // Открываем файл для вывода
     FILE* output = fopen(outputFile, "w");
     if (!output) {
         printf("Error opening output file!\n");
         return 1;
     }
 
-    /* Виведення початкової матриці ТІЛЬКИ У ФАЙЛ
-    fprintf(output, "Initial Matrix:\n");
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            fprintf(output, "%.2f ", matrix[i][j]);
-        }
-        fprintf(output, "\n");
-    }*/
+    //----------------------------------------------------------------------
+    // 1) ПОСЛЕДОВАТЕЛЬНЫЙ РЕЖИМ
+    //----------------------------------------------------------------------
+    clock_t startSeq = clock();
 
-    // Час виконання
-    clock_t start, end;
-    double cpu_time_used;
+    // Умножение матрицы на коэффициент и суммирование
+    float sumSeq = multiplyMatrixAndSumSequential(matrix, rows, cols, coefficient);
 
-    start = clock();
+    // Подсчёт строк с нулевым элементом
+    int zeroRowsCountSeq = countRowsWithZeroSequential(matrix, rows, cols);
 
-    // Множення матриці на коефіцієнт та підрахунок суми елементів
-    float sum = multiplyMatrixAndSum(matrix, rows, cols, coefficient);
+    // Умножение матрицы на вектор
+    multiplyMatrixByVectorSequential(matrix, vector, rows, cols, vectorResult);
 
-    end = clock();
-    cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
-
-    // Запис результату у файл
-    fprintf(output, "Sum of matrix after multiplication: %.2f\n", sum);
-   
-
-    printf("Sum of matrix after multiplication: %.2f\n", sum);
-    
-
-    // Вибір всіх ненульових елементів у новий масив
-    float* nonZeroElements;
-    int nonZeroSize;
-    extractNonZeroElements(matrix, rows, cols, &nonZeroElements, &nonZeroSize);
-    fprintf(output, "Non-zero elements count: %d\n", nonZeroSize);
-    printf("Non-zero elements count: %d\n", nonZeroSize);
-
-    // Підрахунок кількості рядків з нулями
-    int zeroRowsCount = countRowsWithZero(matrix, rows, cols);
-    fprintf(output, "Rows with zero: %d\n", zeroRowsCount);
-    printf("Rows with zero: %d\n", zeroRowsCount);
-
-    fprintf(output, "Execution Time: %.6f seconds\n", cpu_time_used);
-
-    printf("Execution Time: %.6f seconds\n", cpu_time_used);
-    // Усереднення елементів вектора по вікнах
-    int N = 10;  // Розмір вікна
-    float* avgResult;
-    int avgSize;
-    averageInWindow(nonZeroElements, nonZeroSize, N, &avgResult, &avgSize);
-    fprintf(output, "Average result:\n");
-    for (int i = 0; i < avgSize; i++) {
-        fprintf(output, "%.2f ", avgResult[i]);
+    clock_t endSeq = clock();
+    double timeSequential = (double)(endSeq - startSeq) / CLOCKS_PER_SEC;
+    // --- Вывод в консоль ---
+    printf("=== SEQUENTIAL RESULTS ===\n");
+    printf("Sum after multiply: %.2f\n", sumSeq);
+    printf("Rows with zero: %d\n", zeroRowsCountSeq);
+    printf("Matrix-Vector result (first 5 elements): ");
+    for (int i = 0; i < (rows < 5 ? rows : 5); i++) {
+        printf("%.2f ", vectorResult[i]);
     }
-    fprintf(output, "\n");
+    printf("\nSequential Time: %.6f seconds\n\n", timeSequential);
 
-    // Множення матриці на вектор (ТІЛЬКИ У ФАЙЛ)
-    float* vector = (float*)malloc(cols * sizeof(float));
-    for (int i = 0; i < cols; i++) {
-        vector[i] = i + 1.0f;
-    }
-    float* vectorResult = (float*)malloc(rows * sizeof(float));
-    multiplyMatrixByVector(matrix, vector, rows, cols, vectorResult);
-
-    fprintf(output, "Matrix-vector multiplication result:\n");
-    for (int i = 0; i < rows; i++) {
+    // --- Вывод в файл ---
+    fprintf(output, "=== SEQUENTIAL RESULTS ===\n");
+    fprintf(output, "Sum after multiply: %.2f\n", sumSeq);
+    fprintf(output, "Rows with zero: %d\n", zeroRowsCountSeq);
+    fprintf(output, "Matrix-Vector result (first 5 elements): ");
+    for (int i = 0; i < (rows < 5 ? rows : 5); i++) {
         fprintf(output, "%.2f ", vectorResult[i]);
     }
-    fprintf(output, "\n");
+    fprintf(output, "\nSequential Time: %.6f seconds\n\n", timeSequential);
 
-   
-   
-    // Закриття файлу
+ 
+
+    //----------------------------------------------------------------------
+    // 2) ПАРАЛЛЕЛЬНЫЙ РЕЖИМ (OpenMP)
+    //----------------------------------------------------------------------
+    // Заново читаем матрицу, чтобы вернуть её в исходное состояние
+    for (int i = 0; i < rows; i++) {
+        free(matrix[i]);
+    }
+    free(matrix);
+    readMatrixFromFile(matrixFile, &matrix, &rows, &cols);
+
+    clock_t startPar = clock();
+
+    float sumPar = multiplyMatrixAndSumParallel(matrix, rows, cols, coefficient);
+    int zeroRowsCountPar = countRowsWithZeroParallel(matrix, rows, cols);
+    multiplyMatrixByVectorParallel(matrix, vector, rows, cols, vectorResult);
+
+    clock_t endPar = clock();
+    double timeParallel = (double)(endPar - startPar) / CLOCKS_PER_SEC;
+
+
+    // --- Вывод в консоль ---
+    printf("=== PARALLEL RESULTS (OpenMP) ===\n");
+    printf("Sum after multiply: %.2f\n", sumPar);
+    printf("Rows with zero: %d\n", zeroRowsCountPar);
+    printf("Matrix-Vector result (first 5 elements): ");
+    for (int i = 0; i < (rows < 5 ? rows : 5); i++) {
+        printf("%.2f ", vectorResult[i]);
+    }
+    printf("\nParallel Time: %.6f seconds\n\n", timeParallel);
+
+    // --- Вывод в файл ---
+    fprintf(output, "=== PARALLEL RESULTS (OpenMP) ===\n");
+    fprintf(output, "Sum after multiply: %.2f\n", sumPar);
+    fprintf(output, "Rows with zero: %d\n", zeroRowsCountPar);
+    fprintf(output, "Matrix-Vector result (first 5 elements): ");
+    for (int i = 0; i < (rows < 5 ? rows : 5); i++) {
+        fprintf(output, "%.2f ", vectorResult[i]);
+    }
+    fprintf(output, "\nParallel Time: %.6f seconds\n\n", timeParallel);
+
+
+    printf("\nThe program has worked successfully and completed its execution. ");
+
+
+    // Закрываем файл
     fclose(output);
 
-    // Вивільнення пам'яті
-    free(nonZeroElements);
-    free(avgResult);
+    // Освобождаем память
     free(vector);
     free(vectorResult);
     for (int i = 0; i < rows; i++) {
